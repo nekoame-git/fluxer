@@ -1,0 +1,100 @@
+name: build desktop selfhost
+
+on:
+  push:
+    branches:
+      - selfhost-desktop-action
+  workflow_dispatch:
+    inputs:
+      app_url:
+        description: Instance URL to record in the build summary.
+        required: false
+        default: https://fluxer.izumimi.online
+        type: string
+      build_version:
+        description: Desktop build version label.
+        required: false
+        default: 2026.616.selfhost
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  windows-x64:
+    name: Windows x64 unpacked desktop
+    runs-on: windows-2025
+    timeout-minutes: 90
+
+    env:
+      BUILD_CHANNEL: stable
+      RELEASE_CHANNEL: stable
+      PUBLIC_RELEASE_CHANNEL: stable
+      BUILD_VERSION: ${{ github.event.inputs.build_version || '2026.616.selfhost' }}
+      PUBLIC_BUILD_VERSION: ${{ github.event.inputs.build_version || '2026.616.selfhost' }}
+      ELECTRON_ARCH: x64
+      ELECTRON_BUILDER_CACHE: C:\ebcache
+      TEMP: C:\t
+      TMP: C:\t
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.93.0"
+          targets: x86_64-pc-windows-msvc
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Prepare short temp paths
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force C:\t | Out-Null
+          New-Item -ItemType Directory -Force C:\ebcache | Out-Null
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build desktop runtime
+        working-directory: fluxer_desktop
+        run: pnpm build
+
+      - name: Package unpacked Windows app
+        working-directory: fluxer_desktop
+        run: pnpm exec electron-builder --dir --win --x64 --config electron-builder.config.cjs
+
+      - name: List packaged files
+        shell: pwsh
+        run: Get-ChildItem -Recurse fluxer_desktop/dist-electron | Select-Object FullName, Length
+
+      - name: Upload unpacked desktop artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fluxer-desktop-selfhost-win-x64
+          path: fluxer_desktop/dist-electron/**
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Build summary
+        shell: pwsh
+        run: |
+          "### Fluxer desktop self-host build" >> $env:GITHUB_STEP_SUMMARY
+          "" >> $env:GITHUB_STEP_SUMMARY
+          "- Channel: stable" >> $env:GITHUB_STEP_SUMMARY
+          "- Version: $env:BUILD_VERSION" >> $env:GITHUB_STEP_SUMMARY
+          "- Target: Windows x64 unpacked" >> $env:GITHUB_STEP_SUMMARY
+          "- Instance URL: ${{ github.event.inputs.app_url || 'https://fluxer.izumimi.online' }}" >> $env:GITHUB_STEP_SUMMARY
